@@ -43,6 +43,13 @@ if [[ "$configure_main" =~ ^[oO] ]]; then
 server {
     listen 80;
     server_name $main_domain www.$main_domain;
+
+    client_max_body_size 10m;
+    proxy_connect_timeout 60s;
+    proxy_send_timeout 60s;
+    proxy_read_timeout 60s;
+    send_timeout 60s;
+    
     return 301 https://\$host\$request_uri;
 }
 
@@ -54,6 +61,12 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/$main_domain/privkey.pem;
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    client_max_body_size 10m;
+    proxy_connect_timeout 60s;
+    proxy_send_timeout 60s;
+    proxy_read_timeout 60s;
+    send_timeout 60s;
 
     location / {
         proxy_pass http://127.0.0.1:$main_port;
@@ -137,6 +150,14 @@ while true; do
 server {
     listen 80;
     server_name $api_domain www.$api_domain;
+
+    client_max_body_size 10m;
+    proxy_connect_timeout 60s;
+    proxy_send_timeout 60s;
+    proxy_read_timeout 60s;
+    send_timeout 60s;
+
+    
     return 301 https://\$host\$request_uri;
 }
 
@@ -148,6 +169,12 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/$api_domain/privkey.pem;
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    client_max_body_size 10m;
+    proxy_connect_timeout 60s;
+    proxy_send_timeout 60s;
+    proxy_read_timeout 60s;
+    send_timeout 60s;
 
     location / {
         proxy_pass http://127.0.0.1:$api_port;
