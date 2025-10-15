@@ -25,9 +25,16 @@ Il crée automatiquement :
 
 ## 🚀 Utilisation
 
+**Important** : Ce script nécessite `bash`. N'utilisez pas `sh` pour l'exécuter.
+
 ```bash
 chmod +x domains-setup.sh
 ./domains-setup.sh
+```
+
+Ou explicitement avec bash :
+```bash
+bash domains-setup.sh
 ```
 
 ### Workflow interactif :
@@ -180,6 +187,21 @@ Ce script est fourni sous licence **MIT** — libre d'utilisation et de modifica
 ---
 
 ## 🆘 Dépannage
+
+### Erreur "[[: not found" ou "Syntax error: '(' unexpected"
+**Cause** : Le script a été exécuté avec `sh` au lieu de `bash`.
+
+**Solution** : Utilisez `bash` pour exécuter le script :
+```bash
+bash domains-setup.sh
+# ou
+./domains-setup.sh  # (si le fichier est exécutable)
+```
+
+**Ne pas utiliser** :
+```bash
+sh domains-setup.sh  # ❌ Cela ne fonctionnera pas
+```
 
 ### Le script échoue lors de la génération SSL
 - Vérifiez que vos domaines pointent bien vers votre serveur (DNS)
