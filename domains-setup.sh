@@ -25,7 +25,6 @@ if [[ "$configure_main" =~ ^[oO] ]]; then
 
     # --- Gérer Docker temporairement ---
     docker_was_active=0
-    # Vérifier si le service docker existe et s'il est actif
     if systemctl list-unit-files | grep -q '^docker.service'; then
         if sudo systemctl is-active --quiet docker; then
             docker_was_active=1
@@ -33,12 +32,42 @@ if [[ "$configure_main" =~ ^[oO] ]]; then
             sudo systemctl stop docker
         fi
     fi
-
-    # S'assurer que Docker sera redémarré à la sortie si on l'a arrêté
     trap 'if [ "$docker_was_active" -eq 1 ]; then echo "🔄 Redémarrage de Docker..."; sudo systemctl start docker; fi' EXIT
     # --- Fin gestion Docker ---
 
-    # Créer fichier de configuration pour le domaine principal
+    # Installer Certbot si nécessaire (AVANT de créer les configs)
+    if ! command -v certbot &> /dev/null; then
+        echo "Installation de Certbot..."
+        sudo apt update
+        sudo apt install -y certbot python3-certbot-nginx
+    fi
+
+    # Créer fichier de configuration HTTP UNIQUEMENT (temporaire)
+    sudo tee "$main_conf" > /dev/null <<EOF
+server {
+    listen 80;
+    server_name $main_domain www.$main_domain;
+
+    location / {
+        proxy_pass http://127.0.0.1:$main_port;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
+    }
+}
+EOF
+
+    # Activer la configuration HTTP
+    sudo ln -sf "$main_conf" "/etc/nginx/sites-enabled/"
+    sudo nginx -t && sudo systemctl reload nginx
+
+    # Générer le certificat SSL (Certbot va modifier la config automatiquement)
+    echo "Génération du certificat SSL pour $main_domain..."
+    sudo certbot --nginx -d $main_domain -d www.$main_domain
+
+    # Maintenant on crée la configuration HTTPS complète
     sudo tee "$main_conf" > /dev/null <<EOF
 server {
     listen 80;
@@ -49,14 +78,14 @@ server {
     proxy_send_timeout 60s;
     proxy_read_timeout 60s;
     send_timeout 60s;
-    
+
     return 301 https://\$host\$request_uri;
 }
 
 server {
     listen 443 ssl;
     server_name $main_domain www.$main_domain;
-    
+
     ssl_certificate /etc/letsencrypt/live/$main_domain/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/$main_domain/privkey.pem;
     include /etc/letsencrypt/options-ssl-nginx.conf;
@@ -76,7 +105,7 @@ server {
         proxy_set_header Host \$host;
         proxy_cache_bypass \$http_upgrade;
     }
-    
+
     # Redirection www vers non-www
     if (\$host = www.$main_domain) {
         return 301 https://$main_domain\$request_uri;
@@ -84,26 +113,11 @@ server {
 }
 EOF
 
-    # Activer la configuration principale
-    sudo ln -sf "$main_conf" "/etc/nginx/sites-enabled/"
+    sudo nginx -t && sudo systemctl reload nginx
 
-    # Vérifier la configuration avant de continuer
-    sudo nginx -t || { echo "Erreur de configuration Nginx"; exit 1; }
-    sudo systemctl reload nginx
-
-    # Installer Certbot si nécessaire (avant génération des certificats)
-    if ! command -v certbot &> /dev/null; then
-        echo "Installation de Certbot..."
-        sudo apt update
-        sudo apt install -y certbot python3-certbot-nginx
-    fi
-
-    # Générer le certificat SSL pour le domaine principal
-    echo "Génération du certificat SSL pour $main_domain..."
-    sudo certbot --nginx -d $main_domain -d www.$main_domain
 else
     echo "⏭️  Configuration du domaine principal ignorée."
-    
+
     # --- Gérer Docker temporairement même si on skip le domaine principal ---
     docker_was_active=0
     if systemctl list-unit-files | grep -q '^docker.service'; then
@@ -114,8 +128,7 @@ else
         fi
     fi
     trap 'if [ "$docker_was_active" -eq 1 ]; then echo "🔄 Redémarrage de Docker..."; sudo systemctl start docker; fi' EXIT
-    # --- Fin gestion Docker ---
-    
+
     # Installer Nginx et Certbot si nécessaire
     if ! command -v nginx &> /dev/null; then
         echo "Installation de Nginx..."
@@ -123,7 +136,7 @@ else
         sudo apt install -y nginx
         sudo systemctl start nginx
     fi
-    
+
     if ! command -v certbot &> /dev/null; then
         echo "Installation de Certbot..."
         sudo apt update
@@ -145,7 +158,31 @@ while true; do
 
     api_conf="/etc/nginx/sites-available/$api_domain"
 
-    # Créer fichier de configuration pour le sous-domaine API
+    # Créer fichier de configuration HTTP UNIQUEMENT (temporaire)
+    sudo tee "$api_conf" > /dev/null <<EOF
+server {
+    listen 80;
+    server_name $api_domain www.$api_domain;
+
+    location / {
+        proxy_pass http://127.0.0.1:$api_port;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
+    }
+}
+EOF
+
+    sudo ln -sf "$api_conf" "/etc/nginx/sites-enabled/"
+    sudo nginx -t && sudo systemctl reload nginx
+
+    # Générer le certificat SSL
+    echo "Génération du certificat SSL pour $api_domain..."
+    sudo certbot --nginx -d $api_domain -d www.$api_domain
+
+    # Configuration HTTPS complète
     sudo tee "$api_conf" > /dev/null <<EOF
 server {
     listen 80;
@@ -157,14 +194,13 @@ server {
     proxy_read_timeout 60s;
     send_timeout 60s;
 
-    
     return 301 https://\$host\$request_uri;
 }
 
 server {
     listen 443 ssl;
     server_name $api_domain www.$api_domain;
-    
+
     ssl_certificate /etc/letsencrypt/live/$api_domain/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/$api_domain/privkey.pem;
     include /etc/letsencrypt/options-ssl-nginx.conf;
@@ -184,7 +220,7 @@ server {
         proxy_set_header Host \$host;
         proxy_cache_bypass \$http_upgrade;
     }
-    
+
     # Redirection www vers non-www
     if (\$host = www.$api_domain) {
         return 301 https://$api_domain\$request_uri;
@@ -192,14 +228,7 @@ server {
 }
 EOF
 
-    # Activer et tester la configuration API
-    sudo ln -sf "$api_conf" "/etc/nginx/sites-enabled/"
-    sudo nginx -t || { echo "Erreur de configuration Nginx pour $api_domain"; exit 1; }
-    sudo systemctl reload nginx
-
-    # Générer le certificat SSL pour ce sous-domaine
-    echo "Génération du certificat SSL pour $api_domain..."
-    sudo certbot --nginx -d $api_domain -d www.$api_domain
+    sudo nginx -t && sudo systemctl reload nginx
 
     # Sauvegarder pour le récapitulatif
     apis+=("$api_domain:$api_port")
