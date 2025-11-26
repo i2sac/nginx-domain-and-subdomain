@@ -35,11 +35,18 @@ if [[ "$configure_main" =~ ^[oO] ]]; then
     trap 'if [ "$docker_was_active" -eq 1 ]; then echo "🔄 Redémarrage de Docker..."; sudo systemctl start docker; fi' EXIT
     # --- Fin gestion Docker ---
 
-    # Installer Certbot si nécessaire (AVANT de créer les configs)
+    # Installer Certbot via snap (méthode recommandée)
     if ! command -v certbot &> /dev/null; then
-        echo "Installation de Certbot..."
+        echo "Installation de Certbot via snap..."
         sudo apt update
-        sudo apt install -y certbot python3-certbot-nginx
+        sudo apt install -y snapd
+        sudo snap install core
+        sudo snap refresh core
+        sudo snap install --classic certbot
+        sudo ln -sf /snap/bin/certbot /usr/bin/certbot
+        
+        # Désinstaller l'ancien certbot apt si présent
+        sudo apt remove -y certbot python3-certbot-nginx 2>/dev/null || true
     fi
 
     # Créer fichier de configuration HTTP UNIQUEMENT (temporaire)
@@ -47,6 +54,12 @@ if [[ "$configure_main" =~ ^[oO] ]]; then
 server {
     listen 80;
     server_name $main_domain www.$main_domain;
+
+    client_max_body_size 10m;
+    proxy_connect_timeout 60s;
+    proxy_send_timeout 60s;
+    proxy_read_timeout 60s;
+    send_timeout 60s;
 
     location / {
         proxy_pass http://127.0.0.1:$main_port;
@@ -61,13 +74,25 @@ EOF
 
     # Activer la configuration HTTP
     sudo ln -sf "$main_conf" "/etc/nginx/sites-enabled/"
-    sudo nginx -t && sudo systemctl reload nginx
+    
+    if ! sudo nginx -t; then
+        echo "❌ Erreur de configuration Nginx"
+        exit 1
+    fi
+    
+    sudo systemctl reload nginx
 
     # Générer le certificat SSL (Certbot va modifier la config automatiquement)
     echo "Génération du certificat SSL pour $main_domain..."
-    sudo certbot --nginx -d $main_domain -d www.$main_domain
+    if ! sudo certbot --nginx -d $main_domain -d www.$main_domain --non-interactive --agree-tos --register-unsafely-without-email; then
+        echo "❌ Échec de la génération du certificat SSL"
+        echo "Vérifiez que :"
+        echo "  1. Le domaine $main_domain pointe vers cette IP"
+        echo "  2. Les ports 80 et 443 sont ouverts"
+        exit 1
+    fi
 
-    # Maintenant on crée la configuration HTTPS complète
+    # Maintenant on crée la configuration HTTPS complète avec redirection
     sudo tee "$main_conf" > /dev/null <<EOF
 server {
     listen 80;
@@ -113,7 +138,13 @@ server {
 }
 EOF
 
-    sudo nginx -t && sudo systemctl reload nginx
+    if ! sudo nginx -t; then
+        echo "❌ Erreur de configuration Nginx après SSL"
+        exit 1
+    fi
+    
+    sudo systemctl reload nginx
+    echo "✅ Domaine principal configuré avec succès"
 
 else
     echo "⏭️  Configuration du domaine principal ignorée."
@@ -138,9 +169,14 @@ else
     fi
 
     if ! command -v certbot &> /dev/null; then
-        echo "Installation de Certbot..."
+        echo "Installation de Certbot via snap..."
         sudo apt update
-        sudo apt install -y certbot python3-certbot-nginx
+        sudo apt install -y snapd
+        sudo snap install core
+        sudo snap refresh core
+        sudo snap install --classic certbot
+        sudo ln -sf /snap/bin/certbot /usr/bin/certbot
+        sudo apt remove -y certbot python3-certbot-nginx 2>/dev/null || true
     fi
 fi
 
@@ -164,6 +200,12 @@ server {
     listen 80;
     server_name $api_domain www.$api_domain;
 
+    client_max_body_size 10m;
+    proxy_connect_timeout 60s;
+    proxy_send_timeout 60s;
+    proxy_read_timeout 60s;
+    send_timeout 60s;
+
     location / {
         proxy_pass http://127.0.0.1:$api_port;
         proxy_http_version 1.1;
@@ -176,11 +218,21 @@ server {
 EOF
 
     sudo ln -sf "$api_conf" "/etc/nginx/sites-enabled/"
-    sudo nginx -t && sudo systemctl reload nginx
+    
+    if ! sudo nginx -t; then
+        echo "❌ Erreur de configuration Nginx pour $api_domain"
+        exit 1
+    fi
+    
+    sudo systemctl reload nginx
 
     # Générer le certificat SSL
     echo "Génération du certificat SSL pour $api_domain..."
-    sudo certbot --nginx -d $api_domain -d www.$api_domain
+    if ! sudo certbot --nginx -d $api_domain -d www.$api_domain --non-interactive --agree-tos --register-unsafely-without-email; then
+        echo "❌ Échec de la génération du certificat SSL pour $api_domain"
+        echo "Vérifiez que le sous-domaine pointe vers cette IP"
+        exit 1
+    fi
 
     # Configuration HTTPS complète
     sudo tee "$api_conf" > /dev/null <<EOF
@@ -228,7 +280,13 @@ server {
 }
 EOF
 
-    sudo nginx -t && sudo systemctl reload nginx
+    if ! sudo nginx -t; then
+        echo "❌ Erreur de configuration Nginx après SSL pour $api_domain"
+        exit 1
+    fi
+    
+    sudo systemctl reload nginx
+    echo "✅ Sous-domaine $api_domain configuré avec succès"
 
     # Sauvegarder pour le récapitulatif
     apis+=("$api_domain:$api_port")
@@ -238,6 +296,7 @@ done
 sudo systemctl reload nginx
 
 # Afficher récapitulatif
+echo ""
 echo "✅ Configuration terminée :"
 if [[ -n "$main_domain" ]]; then
     echo "   - https://$main_domain → port $main_port"
@@ -252,3 +311,5 @@ else
     echo "   - Aucun sous-domaine API ajouté."
 fi
 echo "   - Redirection www activée pour les domaines créés"
+echo ""
+echo "📝 Note : Les certificats SSL se renouvellent automatiquement via cron"
